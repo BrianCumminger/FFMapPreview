@@ -1,5 +1,5 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QFileDialog, QFontComboBox, QSpinBox, QColorDialog, QFormLayout
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QFileDialog, QFontComboBox, QSpinBox, QColorDialog, QFormLayout, QMessageBox
 import json
 import base64
 from PyQt6.QtCore import Qt, QRect, QEvent
@@ -164,6 +164,26 @@ class MainWindow(QMainWindow):
                     self.tiles.append(tile)
         print(f"Successfully loaded {len(self.tiles)} tiles from {filename}.")
 
+    def get_coords_from_data(self, map_data, oasis_coord=None):
+        """
+        Extracts all labelable coordinates from map data into a consistent dictionary.
+        """
+        coords = {}
+        if 'OverworldCoordinates' in map_data:
+            coords.update(map_data['OverworldCoordinates'])
+        
+        if 'BridgeLocation' in map_data:
+            coords['BridgeLocation'] = map_data['BridgeLocation']
+        if 'CanalLocation' in map_data:
+            coords['CanalLocation'] = map_data['CanalLocation']
+            
+        if oasis_coord:
+            coords['Oasis'] = oasis_coord
+        elif hasattr(self, 'oasis_coord') and self.oasis_coord:
+             coords['Oasis'] = self.oasis_coord
+             
+        return coords
+
     def load_json(self):
         """
         Event handler for the Load JSON button.
@@ -174,8 +194,41 @@ class MainWindow(QMainWindow):
             
         try:
             with open(filename, 'r') as f:
-                self.map_data = json.load(f)
-            self.label_positions.clear()
+                new_map_data = json.load(f)
+            
+            preserve = False
+            if hasattr(self, 'map_data') and self.label_positions:
+                reply = QMessageBox.question(
+                    self, 
+                    'Preserve Labels?', 
+                    'Would you like to keep your manual label placements for locations that haven\'t moved?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, 
+                    QMessageBox.StandardButton.Yes
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    preserve = True
+            
+            if preserve:
+                # Compare old coords with new coords
+                old_coords = self.get_coords_from_data(self.map_data)
+                # We don't have the new oasis_coord yet until generate_image runs, 
+                # but we can check the rest. Actually, oasis is usually fixed.
+                new_coords = self.get_coords_from_data(new_map_data)
+                
+                new_label_positions = {}
+                for name, pos in self.label_positions.items():
+                    if name in old_coords and name in new_coords:
+                        old_pos = old_coords[name]
+                        new_pos = new_coords[name]
+                        # Check if location is exactly the same
+                        if old_pos.get('X') == new_pos.get('X') and old_pos.get('Y') == new_pos.get('Y'):
+                            new_label_positions[name] = pos
+                
+                self.label_positions = new_label_positions
+            else:
+                self.label_positions.clear()
+
+            self.map_data = new_map_data
             self.drawn_text_rects.clear()
             print(f"Successfully loaded JSON metadata from {filename}!")
             self.generate_image()
@@ -251,36 +304,41 @@ class MainWindow(QMainWindow):
         outline_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         text_brush = QBrush(self.text_color)
 
-        if 'OverworldCoordinates' in self.map_data:
-            coords = self.map_data['OverworldCoordinates'].copy() # Use copy to avoid mutating original data
-        else:
-            coords = {}
+        coords = self.get_coords_from_data(self.map_data)
 
-        if 'BridgeLocation' in self.map_data:
-            coords['BridgeLocation'] = self.map_data['BridgeLocation']
-        if 'CanalLocation' in self.map_data:
-            coords['CanalLocation'] = self.map_data['CanalLocation']
-        
-        if hasattr(self, 'oasis_coord') and self.oasis_coord:
-            coords['Oasis'] = self.oasis_coord
-
+        if coords:
             font_metrics = QFontMetrics(font)
             
             # Sort coordinates by Y, then X to preserve relative placement
             sorted_coords = sorted(coords.items(), key=lambda item: (item[1].get('Y', 0), item[1].get('X', 0)))
             
-            needs_layout = not bool(self.label_positions)
             self.drawn_text_rects.clear()
             drawn_rects = []
             
-            # 1. First Pass: Calculate layout if necessary
+            # 1. Pre-calculate rects for PRESERVED labels so auto-layout avoids them
             for name, pos in sorted_coords:
-                display_name = getattr(self, 'text_mapping', {}).get(name, name) if hasattr(self, 'text_mapping') else name
-                
-                target_x = float(pos.get('X', 0) * 16) + 8
-                target_y = float(pos.get('Y', 0) * 16) + 8
-                
-                if needs_layout:
+                if name in self.label_positions:
+                    display_name = getattr(self, 'text_mapping', {}).get(name, name) if hasattr(self, 'text_mapping') else name
+                    x_offset, y_offset = self.label_positions[name]
+                    text_width = font_metrics.horizontalAdvance(display_name)
+                    text_height = font_metrics.height()
+                    
+                    preserved_rect = QRect(
+                        int(x_offset + text_width * 0.1), 
+                        int(y_offset - font_metrics.ascent() + text_height * 0.2), 
+                        int(text_width * 0.8), 
+                        int(text_height * 0.6)
+                    )
+                    drawn_rects.append(preserved_rect)
+
+            # 2. Calculate layout for NEW or RESET labels
+            for name, pos in sorted_coords:
+                if name not in self.label_positions:
+                    display_name = getattr(self, 'text_mapping', {}).get(name, name) if hasattr(self, 'text_mapping') else name
+                    
+                    target_x = float(pos.get('X', 0) * 16) + 8
+                    target_y = float(pos.get('Y', 0) * 16) + 8
+                    
                     text_width = font_metrics.horizontalAdvance(display_name)
                     text_height = font_metrics.height()
                     
