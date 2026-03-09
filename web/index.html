@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FFR Map Preview Generator</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@400;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <header>
+                <h1>FFR Map Preview</h1>
+                <p>Web Generator</p>
+            </header>
+
+            <section class="controls">
+                <div class="control-group">
+                    <label for="json-upload" class="file-label">
+                        <span>Load JSON Map</span>
+                        <input type="file" id="json-upload" accept=".json">
+                    </label>
+                    <div id="current-filename" class="filename-display" title="No file loaded">No file loaded</div>
+                </div>
+
+                <div class="control-group">
+                    <label>Font Family</label>
+                    <select id="font-family">
+                        <option value="Inter">Inter</option>
+                        <option value="Outfit">Outfit</option>
+                        <option value="serif">Serif</option>
+                        <option value="sans-serif">Sans-Serif</option>
+                        <option value="monospace">Monospace</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label>Font Size (<span id="font-size-val">70</span>px)</label>
+                    <input type="range" id="font-size" min="10" max="150" value="70">
+                </div>
+
+                <div class="control-row">
+                    <div class="control-group half">
+                        <label>Outline</label>
+                        <input type="range" id="outline-size" min="0" max="20" value="12">
+                    </div>
+                    <div class="control-group half">
+                        <label>Line</label>
+                        <input type="range" id="line-width" min="0" max="40" value="8">
+                    </div>
+                </div>
+
+                <div class="control-row">
+                    <div class="control-group half">
+                        <label>Text Color</label>
+                        <div class="color-picker-wrapper">
+                            <input type="color" id="text-color" value="#ffffff">
+                        </div>
+                    </div>
+                    <div class="control-group half">
+                        <label>Outline</label>
+                        <div class="color-picker-wrapper">
+                            <input type="color" id="outline-color" value="#000000">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button id="save-btn" class="primary-btn">Save PNG</button>
+                    <button id="reset-btn" class="secondary-btn">Reset Placements</button>
+                </div>
+            </section>
+
+            <footer>
+                <p> </p>
+            </footer>
+        </aside>
+
+        <main class="preview-area">
+            <div class="canvas-wrapper" id="canvas-wrapper">
+                <canvas id="map-canvas"></canvas>
+                <div id="drop-zone" class="drop-zone">
+                    <p>Drop JSON file here</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    <div id="custom-modal" class="modal-overlay">
+        <div class="modal">
+            <h2 id="modal-title">Confirm</h2>
+            <p id="modal-message">Message goes here</p>
+            <div class="modal-actions">
+                <button id="modal-no" class="secondary-btn">No</button>
+                <button id="modal-yes" class="primary-btn">Yes</button>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/photopea/UPNG.js/UPNG.js"></script>
+    <script src="assets.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
