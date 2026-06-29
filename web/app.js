@@ -3,14 +3,14 @@ class MapPreviewApp {
         this.canvas = document.getElementById('map-canvas');
         this.ctx = this.canvas.getContext('2d');
         this.wrapper = document.getElementById('canvas-wrapper');
-        
+
         this.mapData = null;
         this.tiles = [];
         this.sprites = {};
         this.labelPositions = {};
         this.drawnTextRects = {};
         this.currentFilename = 'map-preview';
-        
+
         // View Transformation State
         this.view = { x: 0, y: 0, k: 1 };
         this.draggingLabel = null;
@@ -87,7 +87,7 @@ class MapPreviewApp {
 
     initEventListeners() {
         document.getElementById('json-upload').addEventListener('change', (e) => this.handleFileUpload(e.target.files[0]));
-        
+
         const wrapper = document.getElementById('canvas-wrapper');
         wrapper.addEventListener('dragover', (e) => { e.preventDefault(); wrapper.classList.add('dragover'); });
         wrapper.addEventListener('dragleave', () => wrapper.classList.remove('dragover'));
@@ -164,16 +164,16 @@ class MapPreviewApp {
         const zoomSpeed = 0.001;
         const delta = -e.deltaY;
         const factor = Math.pow(1.1, delta / 100);
-        
+
         const newK = Math.min(Math.max(this.view.k * factor, 0.01), 20);
-        
+
         // Zoom centered at mouse position
         // World position before zoom
         const wx = (mouse.x - this.view.x) / this.view.k;
         const wy = (mouse.y - this.view.y) / this.view.k;
 
         this.view.k = newK;
-        
+
         // Update offset to keep world position under mouse
         this.view.x = mouse.x - wx * this.view.k;
         this.view.y = mouse.y - wy * this.view.k;
@@ -208,53 +208,70 @@ class MapPreviewApp {
         });
     }
 
+    async processNewMapData(newMapData, fileName) {
+        const filenameDisplay = document.getElementById('current-filename');
+        filenameDisplay.textContent = fileName;
+        filenameDisplay.title = fileName;
+        this.currentFilename = fileName.replace(/\.[^/.]+$/, "");
+
+        let preserve = false;
+        if (this.mapData && Object.keys(this.labelPositions).length > 0) {
+            preserve = await this.showConfirm(
+                "Preserve Labels?",
+                "Would you like to keep your manual label placements for locations that haven't moved?"
+            );
+        }
+
+        if (preserve) {
+            const oldCoords = this.getCoordsFromData(this.mapData);
+            const newCoords = this.getCoordsFromData(newMapData);
+            const newLabelPositions = {};
+
+            for (const name in this.labelPositions) {
+                if (oldCoords[name] && newCoords[name]) {
+                    const oldPos = oldCoords[name];
+                    const newPos = newCoords[name];
+                    if (oldPos.X === newPos.X && oldPos.Y === newPos.Y) {
+                        newLabelPositions[name] = this.labelPositions[name];
+                    }
+                }
+            }
+            this.labelPositions = newLabelPositions;
+        } else {
+            this.labelPositions = {};
+        }
+
+        this.mapData = newMapData;
+        this.generateBaseMap();
+    }
+
     handleFileUpload(file) {
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const newMapData = JSON.parse(e.target.result);
-                
-                // Update filename display
-                const filenameDisplay = document.getElementById('current-filename');
-                filenameDisplay.textContent = file.name;
-                filenameDisplay.title = file.name;
-                this.currentFilename = file.name.replace(/\.[^/.]+$/, "");
+        const ext = file.name.split('.').pop().toLowerCase();
 
-                let preserve = false;
-                if (this.mapData && Object.keys(this.labelPositions).length > 0) {
-                    preserve = await this.showConfirm(
-                        "Preserve Labels?", 
-                        "Would you like to keep your manual label placements for locations that haven't moved?"
-                    );
+        if (ext === 'nes') {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const newMapData = this.parseNES(e.target.result);
+                    await this.processNewMapData(newMapData, file.name);
+                } catch (err) {
+                    alert("Error parsing NES file: " + err.message);
                 }
-
-                if (preserve) {
-                    const oldCoords = this.getCoordsFromData(this.mapData);
-                    const newCoords = this.getCoordsFromData(newMapData);
-                    const newLabelPositions = {};
-
-                    for (const name in this.labelPositions) {
-                        if (oldCoords[name] && newCoords[name]) {
-                            const oldPos = oldCoords[name];
-                            const newPos = newCoords[name];
-                            if (oldPos.X === newPos.X && oldPos.Y === newPos.Y) {
-                                newLabelPositions[name] = this.labelPositions[name];
-                            }
-                        }
-                    }
-                    this.labelPositions = newLabelPositions;
-                } else {
-                    this.labelPositions = {};
+            };
+            reader.readAsArrayBuffer(file);
+        } else {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const newMapData = JSON.parse(e.target.result);
+                    await this.processNewMapData(newMapData, file.name);
+                } catch (err) {
+                    alert("Error parsing JSON file: " + err.message);
                 }
-
-                this.mapData = newMapData;
-                this.generateBaseMap();
-            } catch (err) {
-                alert("Error parsing JSON file: " + err.message);
-            }
-        };
-        reader.readAsText(file);
+            };
+            reader.readAsText(file);
+        }
     }
 
     getCoordsFromData(data) {
@@ -268,18 +285,21 @@ class MapPreviewApp {
 
     generateBaseMap() {
         if (!this.mapData || !this.mapData.DecompressedMapRows) return;
-        
+
         const rows = this.mapData.DecompressedMapRows.map(row => {
-            // Base64 to Uint8Array
-            const binaryString = atob(row);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-            return bytes;
+            if (typeof row === 'string') {
+                // Base64 to Uint8Array
+                const binaryString = atob(row);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+                return bytes;
+            }
+            return row;
         });
 
         const h = rows.length;
         const w = rows[0].length;
-        
+
         this.offscreenCanvas = document.createElement('canvas');
         this.offscreenCanvas.width = w * 16;
         this.offscreenCanvas.height = h * 16;
@@ -303,7 +323,7 @@ class MapPreviewApp {
 
         // Clear and draw base map
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        
+
         this.ctx.save();
         this.ctx.translate(this.view.x, this.view.y);
         this.ctx.scale(this.view.k, this.view.k);
@@ -340,7 +360,7 @@ class MapPreviewApp {
                 const textW = Math.abs(metrics.actualBoundingBoxLeft) + Math.abs(metrics.actualBoundingBoxRight) || (metrics.width);
                 const textH = fontSize;
                 const lp = this.labelPositions[name];
-                
+
                 const preservedRect = {
                     x: lp.x - textW / 2,
                     y: lp.y - textH / 2,
@@ -363,7 +383,7 @@ class MapPreviewApp {
             if (!this.labelPositions[name]) {
                 const targetX = pos.X * 16 + 8;
                 const targetY = pos.Y * 16 + 8;
-                
+
                 let offX = targetX;
                 let offY = targetY + fontSize + 48; // Nudge
 
@@ -382,7 +402,7 @@ class MapPreviewApp {
                     iters++;
                 }
                 this.labelPositions[name] = { x: offX, y: offY };
-                
+
                 const realRect = {
                     x: offX - textW / 2,
                     y: offY - textH / 2,
@@ -398,7 +418,7 @@ class MapPreviewApp {
         if (lineWidth > 0) {
             this.ctx.lineJoin = 'round';
             this.ctx.lineCap = 'round';
-            
+
             sortedKeys.forEach(name => {
                 const pos = coords[name];
                 const lp = this.labelPositions[name];
@@ -427,7 +447,7 @@ class MapPreviewApp {
         sortedKeys.forEach(name => {
             const displayName = this.textMapping[name] || name;
             const lp = this.labelPositions[name];
-            
+
             this.ctx.lineWidth = outlineSize;
             this.ctx.strokeStyle = outlineColor;
             this.ctx.fillStyle = textColor;
@@ -522,7 +542,7 @@ class MapPreviewApp {
         saveCanvas.width = this.offscreenCanvas.width;
         saveCanvas.height = this.offscreenCanvas.height;
         const sCtx = saveCanvas.getContext('2d');
-        
+
         this.drawFullResolution(sCtx);
 
         try {
@@ -530,15 +550,15 @@ class MapPreviewApp {
             // UPNG.encode(data, width, height, colors)
             // colors=0 for lossless, or e.g. 256 for paletted
             const output = UPNG.encode([imageData.data.buffer], saveCanvas.width, saveCanvas.height, 0);
-            
+
             const blob = new Blob([output], { type: 'image/png' });
             const url = URL.createObjectURL(blob);
-            
+
             const link = document.createElement('a');
             link.download = `${this.currentFilename}.png`;
             link.href = url;
             link.click();
-            
+
             // Cleanup
             setTimeout(() => URL.revokeObjectURL(url), 100);
         } catch (err) {
@@ -552,7 +572,7 @@ class MapPreviewApp {
 
     drawFullResolution(ctx) {
         ctx.drawImage(this.offscreenCanvas, 0, 0);
-        
+
         const fontSize = parseInt(document.getElementById('font-size').value);
         const fontFamily = document.getElementById('font-family').value;
         const outlineSize = parseInt(document.getElementById('outline-size').value);
@@ -620,6 +640,159 @@ class MapPreviewApp {
             ctx.imageSmoothingEnabled = false;
             ctx.drawImage(img, pos.X * 16 + 8 - sw / 2, pos.Y * 16 + 8 - sh / 2, sw, sh);
         }
+    }
+
+    parseNES(buffer) {
+        const fileBuffer = new Uint8Array(buffer);
+        const hasHeader = (fileBuffer[0] === 0x4E && fileBuffer[1] === 0x45 && fileBuffer[2] === 0x53 && fileBuffer[3] === 0x1A);
+        const headerOffset = hasHeader ? 16 : 0;
+        const bankStart = 0x4000;
+
+        const pointers = [];
+        for (let i = 0; i < 256; i++) {
+            const offset = headerOffset + bankStart + (i * 2);
+            pointers.push(fileBuffer[offset] | (fileBuffer[offset + 1] << 8));
+        }
+
+        const compressedRows = pointers.map(ptr => {
+            const x = ptr - bankStart;
+            const rowOffset = headerOffset + x;
+            const result = [];
+            let index = 0;
+            while (index < 256 && fileBuffer[rowOffset + index] !== 255) {
+                result.push(fileBuffer[rowOffset + index]);
+                index++;
+            }
+            result.push(fileBuffer[rowOffset + index]);
+            return result;
+        });
+
+        const mapRows = [];
+        for (const compressedRow of compressedRows) {
+            let tile = 0;
+            const row = [];
+            let tileIndex = 0;
+
+            while (row.length < 256) {
+                tile = compressedRow[tileIndex];
+
+                if (tile < 0x80) {
+                    row.push(tile);
+                } else if (tile === 0xFF) {
+                    for (let i = tileIndex; i < 256; i++) {
+                        row.push(0x17);
+                    }
+                } else {
+                    tileIndex++;
+                    let run = compressedRow[tileIndex];
+                    if (run === 0) run = 256;
+
+                    tile -= 0x80;
+                    for (let i = 0; i < run; i++) {
+                        row.push(tile);
+                    }
+                }
+                tileIndex++;
+            }
+            mapRows.push(row);
+        }
+
+        const nesLocationMap = {
+            0: "Coneria", 1: "Pravoka", 2: "Elfland", 3: "Melmond", 4: "Crescent Lake",
+            5: "Gaia", 6: "Onrac", 7: "Lefein", 8: "Coneria Castle", 9: "Elfland Castle",
+            10: "Northwest Castle", 11: "Ordeals", 12: "Temple of Fiends", 13: "Earth Cave",
+            14: "Gurgu Volcano", 15: "Ice Cave", 16: "Cardia", 17: "Bahamut", 18: "Waterfall",
+            19: "Dwarf Cave", 20: "Matoya's Cave", 21: "Sarda's Cave", 22: "Marsh CaveB1",
+            23: "Mirage Tower", 24: "ConeriaCastle2F", 25: "CastleOrdeals2F", 26: "CastleOrdeals3F",
+            27: "MarshCaveB2", 28: "MarshCaveB3", 29: "EarthCaveB2", 30: "EarthCaveB3",
+            31: "EarthCaveB4", 32: "EarthCaveB5", 33: "GurguVolcanoB2", 34: "GurguVolcanoB3",
+            35: "GurguVolcanoB4", 36: "GurguVolcanoB5", 37: "IceCaveB2", 38: "IceCaveB3",
+            39: "BahamutCaveB2", 40: "MirageTower2F", 41: "MirageTower3F", 42: "SeaShrineB5",
+            43: "SeaShrineB4", 44: "SeaShrineB3", 45: "SeaShrineB2", 46: "SeaShrineB1",
+            47: "SkyPalace1F", 48: "SkyPalace2F", 49: "SkyPalace3F", 50: "SkyPalace4F",
+            51: "SkyPalace5F", 52: "TempleOfFiendsRevisited1F", 53: "TempleOfFiendsRevisited2F",
+            54: "TempleOfFiendsRevisited3F", 55: "TempleOfFiendsRevisitedEarth",
+            56: "TempleOfFiendsRevisitedFire", 57: "TempleOfFiendsRevisitedWater",
+            58: "TempleOfFiendsRevisitedAir", 59: "TempleOfFiendsRevisitedChaos", 60: "Titans Tunnel"
+        };
+
+        const overworldCoordinates = {};
+        
+        const tileToLabel = {};
+        const titansTunnels = [];
+        for (let i = 0; i < 128; i++) {
+            const byte2 = fileBuffer[headerOffset + (i * 2) + 1];
+            if ((byte2 & 0x80) !== 0) {
+                const entranceId = byte2 & 0x7F;
+                const locId = fileBuffer[headerOffset + 0x2C40 + entranceId];
+                if (locId in nesLocationMap) {
+                    if (locId === 60) {
+                        const spawnX = fileBuffer[headerOffset + 0x2C00 + entranceId];
+                        titansTunnels.push({ tileIdx: i, spawnX: spawnX });
+                    } else {
+                        tileToLabel[i] = nesLocationMap[locId];
+                    }
+                }
+            }
+        }
+
+        if (titansTunnels.length >= 2) {
+            titansTunnels.sort((a, b) => a.spawnX - b.spawnX);
+            tileToLabel[titansTunnels[0].tileIdx] = "Titans West";
+            tileToLabel[titansTunnels[1].tileIdx] = "Titans East";
+        } else if (titansTunnels.length === 1) {
+            tileToLabel[titansTunnels[0].tileIdx] = "Titans Tunnel";
+        }
+
+        const groups = {}; // name -> array of groups
+
+        for (let y = 0; y < mapRows.length; y++) {
+            const row = mapRows[y];
+            for (let x = 0; x < row.length; x++) {
+                const tileIdx = row[x];
+                if (tileIdx in tileToLabel) {
+                    let name = tileToLabel[tileIdx];
+                    
+                    if (!groups[name]) {
+                        groups[name] = [];
+                    }
+                    
+                    // Find a group this tile belongs to
+                    let foundGroup = groups[name].find(group => 
+                        group.some(pos => Math.abs(pos.X - x) < 5 && Math.abs(pos.Y - y) < 5)
+                    );
+
+                    if (foundGroup) {
+                        foundGroup.push({ X: x, Y: y });
+                    } else {
+                        groups[name].push([{ X: x, Y: y }]);
+                    }
+                }
+            }
+        }
+
+
+        // Calculate averages and populate overworldCoordinates
+        for (const name in groups) {
+            for (const group of groups[name]) {
+                const avgX = group.reduce((sum, pos) => sum + pos.X, 0) / group.length;
+                const avgY = group.reduce((sum, pos) => sum + pos.Y, 0) / group.length;
+                
+                let key = name;
+                let suffix = 1;
+                while (overworldCoordinates[key]) {
+                    suffix++;
+                    key = name + suffix;
+                }
+                this.textMapping[key] = name;
+                overworldCoordinates[key] = { X: avgX, Y: avgY };
+            }
+        }
+
+        return {
+            DecompressedMapRows: mapRows,
+            OverworldCoordinates: overworldCoordinates
+        };
     }
 }
 
