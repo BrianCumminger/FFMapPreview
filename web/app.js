@@ -18,6 +18,8 @@ class MapPreviewApp {
         this.lastMouse = { x: 0, y: 0 };
         this.dragOffset = { x: 0, y: 0 };
         this.oasisCoord = null;
+        this.moveTimeout = null;
+        this.isMoving = false;
 
         this.textMapping = {
             "BahamutCave1": "Bahamut",
@@ -111,13 +113,8 @@ class MapPreviewApp {
             this.labelPositions = {};
             this.refreshImage();
         });
-
-        const fitBtn = document.createElement('button');
-        fitBtn.id = 'fit-btn';
-        fitBtn.className = 'secondary-btn';
-        fitBtn.textContent = 'Fit to Screen';
-        fitBtn.addEventListener('click', () => this.autoFit());
-        document.querySelector('.actions').appendChild(fitBtn);
+        document.getElementById('fit-btn').addEventListener('click', () => this.autoFit());
+        document.getElementById('hq-panning').addEventListener('change', () => this.refreshImage());
 
         // Mouse interaction for dragging and zooming
         this.canvas.addEventListener('wheel', (e) => this.handleWheel(e), { passive: false });
@@ -143,9 +140,21 @@ class MapPreviewApp {
         this.canvas.height = rect.height;
     }
 
+    startMoving() {
+        if (!this.isMoving) {
+            this.isMoving = true;
+            this.refreshImage();
+        }
+        clearTimeout(this.moveTimeout);
+        this.moveTimeout = setTimeout(() => {
+            this.isMoving = false;
+            this.refreshImage();
+        }, 150);
+    }
+
     autoFit() {
         if (!this.offscreenCanvas) return;
-        const padding = 40;
+        const padding = 5;
         const availableW = this.canvas.width - padding * 2;
         const availableH = this.canvas.height - padding * 2;
         const mapW = this.offscreenCanvas.width;
@@ -159,6 +168,7 @@ class MapPreviewApp {
     }
 
     handleWheel(e) {
+        this.startMoving();
         e.preventDefault();
         const mouse = this.getRawMousePos(e);
         const zoomSpeed = 0.001;
@@ -327,6 +337,12 @@ class MapPreviewApp {
         this.ctx.save();
         this.ctx.translate(this.view.x, this.view.y);
         this.ctx.scale(this.view.k, this.view.k);
+
+        const alwaysHQ = document.getElementById('hq-panning').checked;
+        this.ctx.imageSmoothingEnabled = alwaysHQ || !this.isMoving;
+        if (alwaysHQ || !this.isMoving) {
+            this.ctx.imageSmoothingQuality = 'high';
+        }
 
         this.ctx.drawImage(this.offscreenCanvas, 0, 0);
 
@@ -522,6 +538,7 @@ class MapPreviewApp {
         const mouse = this.getMousePos(e);
 
         if (this.draggingMap) {
+            this.startMoving();
             this.view.x += raw.x - this.lastMouse.x;
             this.view.y += raw.y - this.lastMouse.y;
             this.lastMouse = raw;
@@ -530,6 +547,7 @@ class MapPreviewApp {
         }
 
         if (!this.draggingLabel) return;
+        this.startMoving();
         this.labelPositions[this.draggingLabel] = {
             x: mouse.x + this.dragOffset.x,
             y: mouse.y + this.dragOffset.y
@@ -702,7 +720,7 @@ class MapPreviewApp {
             5: "Gaia", 6: "Onrac", 7: "Lefein", 8: "Coneria Castle", 9: "Elfland Castle",
             10: "Northwest Castle", 11: "Ordeals", 12: "Temple of Fiends", 13: "Earth Cave",
             14: "Gurgu Volcano", 15: "Ice Cave", 16: "Cardia", 17: "Bahamut", 18: "Waterfall",
-            19: "Dwarf Cave", 20: "Matoya's Cave", 21: "Sarda's Cave", 22: "Marsh CaveB1",
+            19: "Dwarf Cave", 20: "Matoya's Cave", 21: "Sarda's Cave", 22: "Marsh Cave",
             23: "Mirage Tower", 24: "ConeriaCastle2F", 25: "CastleOrdeals2F", 26: "CastleOrdeals3F",
             27: "MarshCaveB2", 28: "MarshCaveB3", 29: "EarthCaveB2", 30: "EarthCaveB3",
             31: "EarthCaveB4", 32: "EarthCaveB5", 33: "GurguVolcanoB2", 34: "GurguVolcanoB3",
@@ -717,7 +735,7 @@ class MapPreviewApp {
         };
 
         const overworldCoordinates = {};
-        
+
         const tileToLabel = {};
         const titansTunnels = [];
         for (let i = 0; i < 128; i++) {
@@ -752,13 +770,13 @@ class MapPreviewApp {
                 const tileIdx = row[x];
                 if (tileIdx in tileToLabel) {
                     let name = tileToLabel[tileIdx];
-                    
+
                     if (!groups[name]) {
                         groups[name] = [];
                     }
-                    
+
                     // Find a group this tile belongs to
-                    let foundGroup = groups[name].find(group => 
+                    let foundGroup = groups[name].find(group =>
                         group.some(pos => Math.abs(pos.X - x) < 5 && Math.abs(pos.Y - y) < 5)
                     );
 
@@ -777,7 +795,7 @@ class MapPreviewApp {
             for (const group of groups[name]) {
                 const avgX = group.reduce((sum, pos) => sum + pos.X, 0) / group.length;
                 const avgY = group.reduce((sum, pos) => sum + pos.Y, 0) / group.length;
-                
+
                 let key = name;
                 let suffix = 1;
                 while (overworldCoordinates[key]) {
